@@ -4,14 +4,7 @@ import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { MAX_URLS_PER_BATCH } from '@buhc/shared';
 import { createBatch } from '@/lib/client';
-
-function parseCsv(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .flatMap((line) => line.split(','))
-    .map((cell) => cell.trim())
-    .filter((cell) => cell && !/^url$/i.test(cell));
-}
+import { parseUrlList } from '@/lib/csv';
 
 export function SubmitForm() {
   const router = useRouter();
@@ -22,12 +15,12 @@ export function SubmitForm() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function onFile(file: File) {
-    setText(parseCsv(await file.text()).join('\n'));
+    setText(parseUrlList(await file.text()).join('\n'));
   }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const urls = parseCsv(text);
+    const urls = parseUrlList(text);
     if (urls.length === 0) {
       setError('Paste at least one URL.');
       return;

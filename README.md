@@ -403,7 +403,9 @@ that is deliberately capped at 10 req/s globally. Adding workers adds resilience
   honest. It does not handle a schema *change*. A real deployment needs versioned migrations as a
   separate step in the release, not a side effect of booting.
 - **CSV is parsed in the browser** and submitted as JSON, so there is one create endpoint rather than
-  two. A 500-URL cap makes this safe. Large files would need a real multipart upload.
+  two. A 500-URL cap makes this safe. The parser handles quoted cells, CRLF, a BOM and multi-column
+  files, but it is not a full RFC-4180 implementation — no embedded newlines inside quoted cells.
+  Large files would need a real multipart upload.
 - **No tests in the repo.** I verified the guarantees empirically against an instrumented target
   server (rate, in-flight count, backoff gaps, cancel, retry scope, cache eviction, cross-instance
   SSE) and shipped `verify-rate-limit.js` so the headline claim is reproducible. Those checks belong
@@ -455,5 +457,8 @@ that is deliberately capped at 10 req/s globally. Adding workers adds resilience
   count as failures for "retry failed only".
 - Cancelled URLs are eligible for "retry failed", since they never received an answer.
 - Duplicate URLs within one batch are collapsed to a single check.
+- A CSV may have more than one column. A `url`/`link`/`address` header selects the column; with no
+  header, the first cell in each row that looks like a URL is taken. Other columns are ignored rather
+  than submitted and silently rejected server-side.
 - No auth, so all batches are visible to everyone — out of scope per the brief.
 - `NEXT_PUBLIC_API_URL` defaults to `localhost`, which assumes the browser runs on the Docker host.
