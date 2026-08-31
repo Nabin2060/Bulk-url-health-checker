@@ -5,11 +5,10 @@ background under a system-wide rate limit, and the Next.js UI updates over SSE a
 
 ---
 
-## Run it
+## Run command
 
-```bash
 docker compose up --build
-```
+
 
 That is the whole system: Postgres, Redis, the API, a worker, and the web UI.
 
@@ -32,8 +31,7 @@ docker compose up --build --scale worker=3
 docker compose --profile multi-api up --build
 ```
 
-**Local (no Docker)** — needs Postgres and Redis reachable, and a filesystem that supports
-symlinks (npm workspaces link packages; NTFS/exFAT will fail on `npm install`):
+**Local (no Docker)** 
 
 ```bash
 cp .env.example .env
@@ -231,15 +229,72 @@ Heartbeat comments every 15s keep proxies from reaping idle connections.
 
 `GET /api/batches` is served from Redis with a **30-second TTL**. Cold ~29 ms, warm ~2 ms.
 
-Staleness is handled by invalidation, not by hoping the TTL is short enough. Any event that changes
-what the list shows — batch created, status transition, a URL finishing and moving the counters —
-deletes the cache key as part of publishing that event (`packages/core/src/events.ts`). Commit to
-Postgres first, then invalidate, then publish.
+The list is paginated, so **each page is cached under its own key** and invalidation is a **version
+bump**, not a `DEL`:
 
-The result is that during an active batch the cache is invalidated often — which is correct. The
-cache exists to absorb repeated reads of *settled* data, not to serve a number the user has already
-watched change. Additionally, the list page holds its own SSE subscription, so counters move live
-regardless of cache state.
+```
+key      buhc:cache:batch-list:v{N}:{limit}:{cursor}
+INCR     buhc:cache:batch-list:version      <- invalidates every page at once
+```
+
+Two reasons it is a counter rather than a delete:
+
+1. **One INCR invalidates every page**, with no `SCAN` over key patterns.
+2. **It closes the cache-aside race.** With a plain `DEL`, a reader that queried Postgres *before* an
+   invalidation can write its now-stale result *after* it, resurrecting stale data for the full 30s —
+   exactly the user-visible staleness the brief rules out. Here that reader writes under the version
+   it read, so its value lands on a key nobody will look up again. Superseded keys are never read and
+   expire on their own TTL.
+
+Any event that changes what the list shows — batch created, status transition, a URL finishing and
+moving the counters — bumps the version as part of publishing that event
+(`packages/core/src/events.ts`). Commit to Postgres first, then invalidate, then publish.
+
+During an active batch the cache is therefore invalidated often, which is correct: the cache exists to
+absorb repeated reads of *settled* data, not to serve a number the user has already watched change.
+The list page also holds its own SSE subscription, so counters move live regardless of cache state.
+
+---
+
+## UI: pagination and theming
+
+**Keyset pagination, not `OFFSET`.** The cursor is `(created_at, id)` of the last row on the page:
+
+```sql
+WHERE (b.created_at, b.id) < ($cursor_created_at, $cursor_id)
+ORDER BY b.created_at DESC, b.id DESC
+LIMIT $limit + 1          -- the extra row is how we know a next page exists, without COUNT(*)
+```
+
+`OFFSET` would be wrong here specifically because batches are inserted *while the user scrolls* — an
+offset-paged list silently skips or repeats rows as the head shifts. A cursor is anchored to a row, so
+new batches arriving at the top never disturb a page boundary. `batches_keyset_idx (created_at DESC,
+id DESC)` matches the `ORDER BY` exactly, so paging is an index scan at any depth. The cursor is
+opaque to the client: it is echoed back, never parsed.
+
+**Infinite scroll meets a live stream**, which is the interesting part. Three rules keep them
+consistent:
+
+- The SSE `batch-list` snapshot is only the *first* page, so on reconnect the client **merges** it
+  rather than replacing state — pages the user already scrolled past survive a dropped connection.
+- A `batch` event for an unknown batch older than everything loaded is **ignored**; it belongs to a
+  page that has not been fetched, and admitting it would drop it in out of order. It arrives correctly
+  when the user scrolls that far.
+- Page merges dedupe by id, since a batch can arrive both by page fetch and by live event.
+
+The single-batch table reveals rows incrementally too (`URL_PAGE_SIZE`), with a status filter. All
+rows stay in memory — the live merge needs them — so this bounds only what the DOM holds, which is
+the part that actually costs on a 500-URL batch.
+
+**Theming** is light/dark/system. An inline script in `<head>` sets `data-theme` on `<html>` *before
+first paint*, so there is no dark-mode flash; `<html suppressHydrationWarning>` covers the attribute
+the server could not know. The palette is CSS custom properties, with dark defined twice — once under
+`prefers-color-scheme` (so it is still right with JS disabled) and once under `[data-theme='dark']` (so
+an explicit choice beats the OS in both directions). The toggle renders no active state until mounted,
+so server and first client render agree.
+
+Scroll and theme are both `IntersectionObserver`/CSS-variable based — no polling, no layout thrash,
+and `prefers-reduced-motion` disables the animations.
 
 ---
 
@@ -302,10 +357,10 @@ staying unchanged while the target logged requests for the failed URL only.
 | Method | Route | Notes |
 | --- | --- | --- |
 | `POST` | `/api/batches` | `{ urls: string[], name?: string }`, optional `Idempotency-Key`. Returns `batchId`, `batchUrl`, `streamUrl`, full batch. |
-| `GET` | `/api/batches` | 30s Redis cache. |
+| `GET` | `/api/batches?cursor=&limit=` | Keyset-paginated. Returns `{ batches, nextCursor }`. 30s Redis cache, per page. |
 | `GET` | `/api/batches/:id` | Full detail. |
 | `GET` | `/api/batches/:id/stream` | SSE: `snapshot`, then `url` / `batch` deltas. |
-| `GET` | `/api/batches/stream` | SSE for the list view. |
+| `GET` | `/api/batches/stream` | SSE for the list view: `batch-list` (first page) then `batch` deltas. |
 | `POST` | `/api/batches/:id/cancel` | |
 | `POST` | `/api/batches/:id/retry-failed` | |
 

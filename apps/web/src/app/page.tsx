@@ -6,11 +6,12 @@ import { fetchBatches } from '@/lib/api';
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
-  const batches = await fetchBatches();
+  // First page only — the client pulls the rest as the user scrolls.
+  const page = await fetchBatches();
   return (
     <>
       <SubmitForm />
-      <BatchListLive initial={batches} />
+      <BatchListLive initial={page} />
     </>
   );
 }

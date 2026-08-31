@@ -3,11 +3,16 @@
 import type { StreamStatus } from '@/lib/useStream';
 
 const LABELS: Record<StreamStatus, string> = {
-  connecting: 'connecting…',
+  connecting: 'connecting',
   live: 'live',
-  reconnecting: 'reconnecting…',
+  reconnecting: 'reconnecting',
 };
 
 export function ConnectionPill({ status }: { status: StreamStatus }) {
-  return <span className={`pill conn-${status}`}>{LABELS[status]}</span>;
+  return (
+    <span className={`pill conn-${status}`} title={`Live updates: ${LABELS[status]}`}>
+      <span className="dot" aria-hidden />
+      {LABELS[status]}
+    </span>
+  );
 }
