@@ -1,0 +1,78 @@
+name: buhc
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://postgres:postgres@postgres:5432/buhc
+  REDIS_URL: redis://redis:6379
+  RATE_LIMIT_PER_SECOND: "10"
+  CONCURRENCY: "5"
+  MAX_RETRIES: "3"
+  REQUEST_TIMEOUT_MS: "10000"
+  CORS_ORIGIN: "*"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: buhc
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: { context: ., target: api }
+    environment:
+      <<: *app-env
+      API_PORT: "4000"
+    ports: ["4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  # Second API instance: proves SSE fan-out is not tied to one process. `--profile multi-api`
+  api2:
+    build: { context: ., target: api }
+    profiles: ["multi-api"]
+    environment:
+      <<: *app-env
+      API_PORT: "4000"
+    ports: ["4001:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: { context: ., target: worker }
+    environment: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+    environment:
+      API_INTERNAL_URL: http://api:4000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
