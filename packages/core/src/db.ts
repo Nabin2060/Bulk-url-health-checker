@@ -57,7 +57,8 @@ ALTER TABLE urls ADD COLUMN IF NOT EXISTS position integer NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS urls_batch_id_idx ON urls (batch_id);
 CREATE INDEX IF NOT EXISTS urls_batch_status_idx ON urls (batch_id, status);
-CREATE INDEX IF NOT EXISTS batches_created_at_idx ON batches (created_at DESC);
+-- Matches the keyset ORDER BY exactly, so pagination is an index scan.
+CREATE INDEX IF NOT EXISTS batches_keyset_idx ON batches (created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   key        text PRIMARY KEY,

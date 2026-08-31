@@ -17,3 +17,4 @@ export function redis(): Redis {
 export const CHANNEL_EVENTS = 'buhc:events';
 export const CHANNEL_CANCEL = 'buhc:cancel';
 export const CACHE_KEY_BATCH_LIST = 'buhc:cache:batch-list';
+export const CACHE_KEY_BATCH_LIST_VERSION = 'buhc:cache:batch-list:version';

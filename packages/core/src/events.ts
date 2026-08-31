@@ -1,5 +1,5 @@
 import type { BatchSummary, StreamEvent, UrlCheck } from '@buhc/shared';
-import { CACHE_KEY_BATCH_LIST, CHANNEL_CANCEL, CHANNEL_EVENTS, redis } from './redis';
+import { CACHE_KEY_BATCH_LIST_VERSION, CHANNEL_CANCEL, CHANNEL_EVENTS, redis } from './redis';
 
 /**
  * Every state change fans out through Redis pub/sub so any API instance can push it
@@ -9,7 +9,7 @@ import { CACHE_KEY_BATCH_LIST, CHANNEL_CANCEL, CHANNEL_EVENTS, redis } from './r
 export async function publishEvent(event: StreamEvent): Promise<void> {
   const r = redis();
   if (event.type === 'batch' || event.type === 'url') {
-    await r.del(CACHE_KEY_BATCH_LIST);
+    await r.incr(CACHE_KEY_BATCH_LIST_VERSION);
   }
   await r.publish(CHANNEL_EVENTS, JSON.stringify(event));
 }

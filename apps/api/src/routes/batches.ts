@@ -18,9 +18,11 @@ import {
   writeBatchListCache,
 } from '@buhc/core';
 import {
+  batchListQuerySchema,
   createBatchSchema,
   type ActionResponse,
   type BatchDetail,
+  type BatchListPage,
   type CreateBatchResponse,
 } from '@buhc/shared';
 import { normalizeUrls } from '../urls';
@@ -40,12 +42,17 @@ function detailResponse(batch: BatchDetail): CreateBatchResponse {
 }
 
 export async function batchRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/batches', async () => {
-    const cached = await readBatchListCache();
+  app.get('/api/batches', async (req): Promise<BatchListPage> => {
+    const { cursor, limit } = batchListQuerySchema.parse(req.query);
+
+    // Read the version alongside the page, so a write-back cannot resurrect a value
+    // that an invalidation between the miss and the write has already superseded.
+    const { page: cached, version } = await readBatchListCache(cursor, limit);
     if (cached) return cached;
-    const batches = await listBatches();
-    await writeBatchListCache(batches);
-    return batches;
+
+    const page = await listBatches(limit, cursor);
+    await writeBatchListCache(cursor, limit, version, page);
+    return page;
   });
 
   app.post('/api/batches', async (req, reply) => {
@@ -88,9 +95,12 @@ export async function batchRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(detailResponse(batch));
   });
 
-  app.get('/api/batches/stream', async (_req, reply) => {
-    const batches = await listBatches();
-    openStream(reply, null, { type: 'batch-list', batches });
+  app.get('/api/batches/stream', async (req, reply) => {
+    // The stream's snapshot is always the FIRST page: a reconnecting client rebuilds
+    // from the head and re-scrolls, rather than trusting a cursor it may have outgrown.
+    const { limit } = batchListQuerySchema.parse(req.query);
+    const page = await listBatches(limit);
+    openStream(reply, null, { type: 'batch-list', page });
   });
 
   app.get<{ Params: IdParams }>('/api/batches/:id', async (req, reply) => {

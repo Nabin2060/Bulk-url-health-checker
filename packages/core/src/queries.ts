@@ -1,4 +1,11 @@
-import type { BatchDetail, BatchSummary, UrlCheck, UrlStatus } from '@buhc/shared';
+import {
+  DEFAULT_PAGE_SIZE,
+  type BatchDetail,
+  type BatchListPage,
+  type BatchSummary,
+  type UrlCheck,
+  type UrlStatus,
+} from '@buhc/shared';
 import { query, withTransaction } from './db';
 
 interface BatchRow {
@@ -74,12 +81,49 @@ function toUrl(row: UrlRow): UrlCheck {
   };
 }
 
-export async function listBatches(limit = 100): Promise<BatchSummary[]> {
+/**
+ * Keyset ("seek") pagination on (created_at, id). OFFSET would be wrong here: batches
+ * are inserted while the user scrolls, so an offset-paged list would skip or repeat
+ * rows. A cursor is anchored to a row, so new batches at the head never shift a page.
+ */
+function encodeCursor(row: { created_at: Date; id: string }): string {
+  return `${row.created_at.toISOString()}|${row.id}`;
+}
+
+function decodeCursor(cursor: string | undefined): { createdAt: string; id: string } | null {
+  if (!cursor) return null;
+  const sep = cursor.lastIndexOf('|');
+  if (sep <= 0) return null;
+  const createdAt = cursor.slice(0, sep);
+  const id = cursor.slice(sep + 1);
+  if (Number.isNaN(Date.parse(createdAt)) || !UUID_RE.test(id)) return null;
+  return { createdAt, id };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function listBatches(
+  limit = DEFAULT_PAGE_SIZE,
+  cursor?: string,
+): Promise<BatchListPage> {
+  const after = decodeCursor(cursor);
+  // Fetch one extra row to learn whether another page exists, without a COUNT(*).
   const rows = await query<BatchRow>(
-    `${SUMMARY_SELECT} GROUP BY b.id ORDER BY b.created_at DESC LIMIT $1`,
-    [limit],
+    `${SUMMARY_SELECT}
+      WHERE ($2::timestamptz IS NULL OR (b.created_at, b.id) < ($2::timestamptz, $3::uuid))
+      GROUP BY b.id
+      ORDER BY b.created_at DESC, b.id DESC
+      LIMIT $1`,
+    [limit + 1, after?.createdAt ?? null, after?.id ?? null],
   );
-  return rows.map(toSummary);
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page[page.length - 1];
+  return {
+    batches: page.map(toSummary),
+    nextCursor: hasMore && last ? encodeCursor(last) : null,
+  };
 }
 
 export async function getBatchSummary(batchId: string): Promise<BatchSummary | null> {
