@@ -168,6 +168,21 @@ if BullMQ ever gives up before our counter does, the row is still finalised rath
 
 ---
 
+### Worker death mid-check
+
+A worker SIGKILLed with checks in flight recovers without a sweeper, because two mechanisms line up:
+
+1. BullMQ's lock on the job expires and the job is re-delivered as **stalled**.
+2. `claimUrl` matches `status IN ('queued','running')`, so the redelivered job re-claims a row that
+   is still marked `running` from the dead worker — rather than refusing it as already taken.
+
+Verified: 10 URLs, 5 in flight, `docker kill -s KILL` the worker. The batch reached `completed` with
+all 10 successful and `attempts = 2` on the five that were interrupted — they were re-run exactly
+once. This is why `claimUrl` accepts `running` and not just `queued`; narrowing that guard to
+`queued` would look tighter and would strand every interrupted row forever.
+
+---
+
 ## Idempotency
 
 Four layers, because "the user double-clicked" and "the queue delivered twice" are different problems.
@@ -418,9 +433,9 @@ that is deliberately capped at 10 req/s globally. Adding workers adds resilience
 
 **With more time:**
 
-1. **Dead-letter handling and stalled-job reconciliation.** A sweeper that finds `running` rows with
-   no live job — the failure mode that survives every guard above is a worker being SIGKILLed
-   mid-check.
+1. **Dead-letter handling.** Jobs that exhaust their attempts are marked `failed` and left; there is
+   no dead-letter queue to inspect or drain. A `running` row whose worker died *is* recovered
+   (see below), but a poison URL that fails every time just sits as `failed` with no triage path.
 2. **`Last-Event-ID` on the SSE stream.** Snapshot-on-reconnect is correct but re-sends the whole
    batch. For a 500-URL batch on a flaky connection that is wasteful; a resume cursor would send only
    the delta.
