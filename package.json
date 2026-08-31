@@ -1,0 +1,23 @@
+{
+  "name": "bulk-url-health-checker",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @buhc/shared && npm run build -w @buhc/core && npm run build -w @buhc/api && npm run build -w @buhc/worker && npm run build -w @buhc/web",
+    "dev": "npm run build -w @buhc/shared && npm run build -w @buhc/core && concurrently -n api,worker,web -c blue,magenta,green \"npm run dev -w @buhc/api\" \"npm run dev -w @buhc/worker\" \"npm run dev -w @buhc/web\"",
+    "typecheck": "npm run build -w @buhc/shared && npm run build -w @buhc/core && tsc -p apps/api --noEmit && tsc -p apps/worker --noEmit && tsc -p apps/web --noEmit",
+    "up": "docker compose up --build",
+    "down": "docker compose down -v"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
