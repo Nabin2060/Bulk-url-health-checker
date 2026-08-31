@@ -10,6 +10,12 @@ export type UrlStatus = (typeof URL_STATUSES)[number];
 
 export const MAX_URLS_PER_BATCH = 500;
 
+/** Batch list is keyset-paginated; the UI pulls pages as the user scrolls. */
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_PAGE_SIZE = 100;
+/** Rows revealed per step in the single-batch URL table. */
+export const URL_PAGE_SIZE = 50;
+
 export interface UrlCheck {
   id: string;
   batchId: string;
@@ -46,6 +52,21 @@ export interface BatchDetail extends BatchSummary {
   urls: UrlCheck[];
 }
 
+/**
+ * One page of the batch list. `nextCursor` is opaque to the client: it is only ever
+ * echoed back, never parsed, so the keyset encoding stays a server concern.
+ */
+export interface BatchListPage {
+  batches: BatchSummary[];
+  nextCursor: string | null;
+}
+
+export const batchListQuerySchema = z.object({
+  cursor: z.string().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+});
+export type BatchListQuery = z.infer<typeof batchListQuerySchema>;
+
 export const createBatchSchema = z.object({
   name: z.string().trim().max(120).optional(),
   urls: z
@@ -77,7 +98,7 @@ export type StreamEvent =
   | { type: 'snapshot'; batch: BatchDetail }
   | { type: 'url'; url: UrlCheck }
   | { type: 'batch'; batch: BatchSummary }
-  | { type: 'batch-list'; batches: BatchSummary[] };
+  | { type: 'batch-list'; page: BatchListPage };
 
 export const TERMINAL_BATCH_STATUSES: BatchStatus[] = ['completed', 'cancelled'];
 
